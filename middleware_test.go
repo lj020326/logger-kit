@@ -896,10 +896,14 @@ func TestMiddleware_Query_NilSensitiveParams(t *testing.T) {
 		Format: FormatJSON,
 	})
 
+	// Disabling redaction is now an explicit flag. Spelling it as a nil slice
+	// did not survive a round trip through JSON or YAML, where an omitted
+	// field unmarshals to nil -- so deserialising a config turned redaction
+	// off without anyone asking.
 	middleware := Middleware(MiddlewareConfig{
-		Logger:               logger,
-		IncludeQuery:         true,
-		SensitiveQueryParams: nil, // disable redaction
+		Logger:                logger,
+		IncludeQuery:          true,
+		DisableQueryRedaction: true,
 	})
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -911,6 +915,6 @@ func TestMiddleware_Query_NilSensitiveParams(t *testing.T) {
 	middleware(handler).ServeHTTP(rec, req)
 
 	output := buf.String()
-	assert.Contains(t, output, "token=secret123", "nil SensitiveQueryParams should not redact")
+	assert.Contains(t, output, "token=secret123", "DisableQueryRedaction should not redact")
 	assert.Contains(t, output, "foo=bar")
 }

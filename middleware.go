@@ -77,11 +77,35 @@ type MiddlewareConfig struct {
 	// Default: true
 	IncludeQuery bool
 
-	// SensitiveQueryParams is a list of query parameter names to redact (value replaced with "***").
-	// When empty, defaultSensitiveQueryParams is used. Set to nil to disable query redaction.
+	// SensitiveQueryParams is a list of query parameter names to redact (value
+	// replaced with "***"). When empty, defaultSensitiveQueryParams is used.
+	//
+	// Use DisableQueryRedaction to turn redaction off. This used to be spelled
+	// by passing nil rather than an empty slice -- a distinction that does not
+	// survive a round trip through JSON or YAML, where an omitted field
+	// unmarshals to nil, so deserialising a config silently disabled redaction.
 	SensitiveQueryParams []string
 
-	// IncludeBody includes request body in logs.
+	// DisableQueryRedaction logs query strings verbatim.
+	DisableQueryRedaction bool
+
+	// SensitiveBodyFields is a list of field names to redact inside a logged
+	// request body. When empty, defaultSensitiveBodyFields is used.
+	//
+	// JSON and form-encoded bodies are redacted field by field; a body in any
+	// other format is replaced wholesale, since there is no structure to
+	// redact selectively.
+	SensitiveBodyFields []string
+
+	// DisableBodyRedaction logs request bodies verbatim.
+	//
+	// Only set this where bodies are known not to carry credentials. The
+	// password in a JSON or form login request lives in the body, not in the
+	// query string or the headers.
+	DisableBodyRedaction bool
+
+	// IncludeBody includes request body in logs. The body is redacted unless
+	// DisableBodyRedaction is set; see SensitiveBodyFields.
 	// Warning: This may log sensitive data.
 	// Default: false
 	IncludeBody bool
@@ -131,12 +155,13 @@ var defaultSensitiveQueryParams = []string{
 	"access_token", "refresh_token", "session", "session_id",
 }
 
-// redactQuery redacts sensitive query parameters. If sensitiveKeys is nil, returns rawQuery unchanged.
+// redactQuery redacts sensitive query parameters. An empty sensitiveKeys means
+// nothing is redacted; callers pass the default list when they want redaction.
 func redactQuery(rawQuery string, sensitiveKeys []string) string {
 	if rawQuery == "" {
 		return ""
 	}
-	if sensitiveKeys == nil {
+	if len(sensitiveKeys) == 0 {
 		return rawQuery
 	}
 	keysMap := make(map[string]bool)
@@ -220,9 +245,21 @@ func Middleware(cfg MiddlewareConfig) func(http.Handler) http.Handler {
 		sensitiveHeaderMap[strings.ToLower(h)] = true
 	}
 
-	sensitiveQueryKeys := cfg.SensitiveQueryParams
-	if cfg.SensitiveQueryParams != nil && len(cfg.SensitiveQueryParams) == 0 {
-		sensitiveQueryKeys = defaultSensitiveQueryParams
+	sensitiveBodyFields := cfg.SensitiveBodyFields
+	if len(sensitiveBodyFields) == 0 {
+		sensitiveBodyFields = defaultSensitiveBodyFields
+	}
+
+	// An empty list means "use the defaults"; turning redaction off is spelled
+	// DisableQueryRedaction. Relying on nil-versus-empty did not survive a
+	// round trip through JSON or YAML, where an omitted field unmarshals to
+	// nil -- so deserialising a config silently disabled redaction.
+	var sensitiveQueryKeys []string
+	if !cfg.DisableQueryRedaction {
+		sensitiveQueryKeys = cfg.SensitiveQueryParams
+		if len(sensitiveQueryKeys) == 0 {
+			sensitiveQueryKeys = defaultSensitiveQueryParams
+		}
 	}
 
 	return func(next http.Handler) http.Handler {
@@ -267,7 +304,10 @@ func Middleware(cfg MiddlewareConfig) func(http.Handler) http.Handler {
 
 			var requestBodyForLog []byte
 			if cfg.IncludeBody && (r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch) && r.Body != nil {
-				requestBodyForLog, _ = io.ReadAll(io.LimitReader(r.Body, int64(cfg.MaxBodySize)))
+				// One byte past the limit, so truncation is detectable. Capping
+				// the read at exactly MaxBodySize made a complete body of that
+				// size indistinguishable from a truncated one.
+				requestBodyForLog, _ = io.ReadAll(io.LimitReader(r.Body, int64(cfg.MaxBodySize)+1))
 				r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(requestBodyForLog), r.Body))
 			}
 
@@ -333,11 +373,19 @@ func Middleware(cfg MiddlewareConfig) func(http.Handler) http.Handler {
 
 			// Add request body (net/http: from buffered peek)
 			if cfg.IncludeBody && len(requestBodyForLog) > 0 {
-				if len(requestBodyForLog) >= cfg.MaxBodySize {
-					event = event.Str("request_body", string(requestBodyForLog)+"...[truncated]")
-				} else {
-					event = event.Str("request_body", string(requestBodyForLog))
+				body := requestBodyForLog
+				truncated := len(body) > cfg.MaxBodySize
+				if truncated {
+					body = body[:cfg.MaxBodySize]
 				}
+				logged := string(body)
+				if !cfg.DisableBodyRedaction {
+					logged = redactBody(r.Header.Get("Content-Type"), body, sensitiveBodyFields)
+				}
+				if truncated {
+					logged += "...[truncated]"
+				}
+				event = event.Str("request_body", logged)
 			}
 
 			// Add response size
@@ -390,9 +438,21 @@ func FiberMiddleware(cfg MiddlewareConfig) fiber.Handler {
 		sensitiveHeaderMap[strings.ToLower(h)] = true
 	}
 
-	sensitiveQueryKeysFiber := cfg.SensitiveQueryParams
-	if cfg.SensitiveQueryParams != nil && len(cfg.SensitiveQueryParams) == 0 {
-		sensitiveQueryKeysFiber = defaultSensitiveQueryParams
+	sensitiveBodyFieldsFiber := cfg.SensitiveBodyFields
+	if len(sensitiveBodyFieldsFiber) == 0 {
+		sensitiveBodyFieldsFiber = defaultSensitiveBodyFields
+	}
+
+	// An empty list means "use the defaults"; turning redaction off is spelled
+	// DisableQueryRedaction. Relying on nil-versus-empty did not survive a
+	// round trip through JSON or YAML, where an omitted field unmarshals to
+	// nil -- so deserialising a config silently disabled redaction.
+	var sensitiveQueryKeysFiber []string
+	if !cfg.DisableQueryRedaction {
+		sensitiveQueryKeysFiber = cfg.SensitiveQueryParams
+		if len(sensitiveQueryKeysFiber) == 0 {
+			sensitiveQueryKeysFiber = defaultSensitiveQueryParams
+		}
 	}
 
 	return func(c fiber.Ctx) error {
@@ -499,10 +559,20 @@ func FiberMiddleware(cfg MiddlewareConfig) fiber.Handler {
 		// Add request body if enabled
 		if cfg.IncludeBody {
 			body := c.Body()
+			truncated := false
 			if len(body) > cfg.MaxBodySize {
-				event = event.Str("request_body", string(body[:cfg.MaxBodySize])+"...[truncated]")
-			} else if len(body) > 0 {
-				event = event.Str("request_body", string(body))
+				body = body[:cfg.MaxBodySize]
+				truncated = true
+			}
+			if len(body) > 0 {
+				logged := string(body)
+				if !cfg.DisableBodyRedaction {
+					logged = redactBody(c.Get("Content-Type"), body, sensitiveBodyFieldsFiber)
+				}
+				if truncated {
+					logged += "...[truncated]"
+				}
+				event = event.Str("request_body", logged)
 			}
 		}
 
