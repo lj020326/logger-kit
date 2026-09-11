@@ -21,7 +21,7 @@
 ## 安全说明
 
 - **Level 端点**：生产环境中必须设置 `AllowedIPs` 或 `RequireAuth`，且不要将端点暴露到公网。若部署在反向代理后，请设置 `TrustedProxies` 为代理 IP。
-- **Query/Body 日志**：默认会记录 URL 查询参数；可通过 `SensitiveQueryParams`（默认会脱敏 password、token 等常见参数）避免泄露敏感信息。敏感接口请勿开启 `IncludeBody`。
+- **Query/Body 日志**：默认会记录 URL 查询参数；可通过 `SensitiveQueryParams`（默认会脱敏 password、token 等常见参数）避免泄露敏感信息，`DisableQueryRedaction` 可关闭脱敏。开启请求体记录时，`SensitiveBodyFields` / `DisableBodyRedaction` 提供同样的控制。敏感接口请勿开启 `IncludeBody`。
 - 详见 [SECURITY.md](SECURITY.md) 及漏洞报告方式。
 
 ## 安装
@@ -342,8 +342,11 @@ type MiddlewareConfig struct {
     IncludeHeaders        bool          // 记录请求头
     SensitiveHeaders      []string      // 需要脱敏的头
     IncludeQuery          bool          // 记录查询参数
-    SensitiveQueryParams  []string      // 需脱敏的 query 键（nil=不脱敏；空切片=使用默认列表）
+    SensitiveQueryParams  []string      // 需脱敏的 query 键（为空=使用默认列表）
+    DisableQueryRedaction bool          // 原样记录 query 字符串
     IncludeBody           bool          // 记录请求体（慎用）
+    SensitiveBodyFields   []string      // 需脱敏的请求体字段名（为空=使用默认列表）
+    DisableBodyRedaction  bool          // 原样记录请求体
     MaxBodySize           int           // 记录的最大请求体大小
     CustomFields          func(*http.Request) map[string]interface{}   // 自定义字段（net/http）
     CustomFieldsFiber     func(fiber.Ctx) map[string]interface{}   // 自定义字段（Fiber）
@@ -351,7 +354,7 @@ type MiddlewareConfig struct {
 }
 ```
 
-**敏感数据：** 默认会记录 query；URL 中常含 token、密码等。可通过 `SensitiveQueryParams`（默认会脱敏 password、token、code、secret、api_key 等）在日志中脱敏；设为 `nil` 可关闭 query 脱敏。`IncludeBody` 默认关闭，开启可能记录凭证，仅建议在非敏感路径使用或先脱敏再记录。
+**敏感数据：** 默认会记录 query；URL 中常含 token、密码等。可通过 `SensitiveQueryParams`（默认会脱敏 password、token、code、secret、api_key 等）在日志中脱敏；留空即使用该默认列表，需要关闭脱敏请设置 `DisableQueryRedaction`。此前是用 `nil`（而非空切片）表示关闭脱敏，但这一区别无法在 JSON / YAML 往返后保留——字段缺失时反序列化即为 `nil`，于是加载配置会静默关闭脱敏。无法解析的 query 字符串会被整体脱敏。`IncludeBody` 默认关闭，开启后请求体同样会被脱敏：`SensitiveBodyFields`（留空=默认列表）用于脱敏 JSON 与表单请求体中的字段，其它格式的请求体整体替换，`DisableBodyRedaction` 则原样记录。
 
 ### 日志级别端点配置
 

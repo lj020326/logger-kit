@@ -21,7 +21,7 @@ A structured logging toolkit for Go applications based on [zerolog](https://gith
 ## Security
 
 - **Level endpoint**: In production, always set `AllowedIPs` or `RequireAuth`; do not expose the endpoint publicly. When behind a reverse proxy, set `TrustedProxies` to your proxy IPs. If `RequireAuth` is true, you must supply `AuthFunc`/`AuthFuncFiber` or requests will be rejected.
-- **Query/body logging**: Query parameters are logged by default; use `SensitiveQueryParams` (default list redacts common keys like `password`, `token`) to avoid leaking secrets. Avoid enabling `IncludeBody` on sensitive routes. Unparseable query strings are fully redacted.
+- **Query/body logging**: Query parameters are logged by default; `SensitiveQueryParams` (default list redacts common keys like `password`, `token`) avoids leaking secrets, and `DisableQueryRedaction` turns it off. Logged request bodies get the same treatment through `SensitiveBodyFields` / `DisableBodyRedaction`. Avoid enabling `IncludeBody` on sensitive routes. Unparseable query strings are fully redacted.
 - See [SECURITY.md](SECURITY.md) for details and how to report vulnerabilities.
 
 ## Installation
@@ -342,8 +342,11 @@ type MiddlewareConfig struct {
     IncludeHeaders        bool          // Log request headers
     SensitiveHeaders      []string      // Headers to redact
     IncludeQuery          bool          // Log query parameters
-    SensitiveQueryParams  []string      // Query keys to redact (nil = no redaction; empty = use default list)
+    SensitiveQueryParams  []string      // Query keys to redact (empty = use default list)
+    DisableQueryRedaction bool          // Log query strings verbatim
     IncludeBody           bool          // Log request body (use with caution)
+    SensitiveBodyFields   []string      // Body field names to redact (empty = use default list)
+    DisableBodyRedaction  bool          // Log request bodies verbatim
     MaxBodySize           int           // Max body size to log
     CustomFields          func(*http.Request) map[string]interface{}     // Extra fields (net/http)
     CustomFieldsFiber     func(fiber.Ctx) map[string]interface{}        // Extra fields (Fiber)
@@ -351,7 +354,7 @@ type MiddlewareConfig struct {
 }
 ```
 
-**Sensitive data:** `IncludeQuery` is true by default; query strings often contain tokens or passwords. Use `SensitiveQueryParams` (default list includes `password`, `token`, `code`, `secret`, `api_key`, etc.) to redact those values in logs. Set to `nil` to disable query redaction. Unparseable query strings are fully redacted. `IncludeBody` is false by default; enabling it can log credentials—use only for non-sensitive routes or redact before logging. For console format, the default field value formatter uses `%v`; avoid logging sensitive fields (see `logger.SensitiveFieldNames`) or set a custom `FormatFieldValue` to mask them.
+**Sensitive data:** `IncludeQuery` is true by default; query strings often contain tokens or passwords. Use `SensitiveQueryParams` (default list includes `password`, `token`, `code`, `secret`, `api_key`, etc.) to redact those values in logs; leave it empty to get that default list, and set `DisableQueryRedaction` to turn redaction off. Redaction used to be disabled by passing `nil` instead of an empty slice — a distinction that does not survive a round trip through JSON or YAML, where an omitted field unmarshals to `nil`, so deserialising a config silently disabled it. Unparseable query strings are fully redacted. `IncludeBody` is false by default; enabling it logs bodies with the same treatment — `SensitiveBodyFields` (empty = default list) redacts fields inside JSON and form-encoded bodies, a body in any other format is replaced wholesale, and `DisableBodyRedaction` logs bodies verbatim. For console format, the default field value formatter uses `%v`; avoid logging sensitive fields (see `logger.SensitiveFieldNames`) or set a custom `FormatFieldValue` to mask them.
 
 ### Level Endpoint Configuration
 
