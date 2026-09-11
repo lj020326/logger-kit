@@ -132,3 +132,39 @@ func TestExactSizeBodyIsNotMarkedTruncated(t *testing.T) {
 		t.Errorf("a complete body of exactly MaxBodySize was marked truncated: %s", buf.String())
 	}
 }
+
+// --- Codex review follow-up (PR #4) ---
+
+// TestRedactJSONPreservesLargeIntegers is the regression test for decoding a
+// logged body into a bare interface{}: every JSON number became a float64, so
+// re-marshalling rewrote any integer past 2^53. An order id logged as
+// 9007199254740993 came back as 9007199254740992, which is worse than not
+// logging it at all.
+func TestRedactJSONPreservesLargeIntegers(t *testing.T) {
+	body := []byte(`{"order_id":9007199254740993,"amount":12345678901234567890,"ratio":0.1,"password":"hunter2"}`)
+
+	out, ok := redactJSON(body, map[string]bool{"password": true})
+	if !ok {
+		t.Fatal("redactJSON reported the body as unparseable")
+	}
+
+	for _, want := range []string{`"order_id":9007199254740993`, `"amount":12345678901234567890`, `"ratio":0.1`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("redacted body %s\nis missing %s -- the number was rewritten", out, want)
+		}
+	}
+	if !strings.Contains(out, `"password":"***"`) {
+		t.Errorf("redacted body %s did not redact the password", out)
+	}
+}
+
+// TestRedactJSONRejectsTrailingContent: switching from json.Unmarshal to a
+// Decoder must not start accepting bodies Unmarshal rejected, or a truncated
+// body would log as if it had parsed cleanly.
+func TestRedactJSONRejectsTrailingContent(t *testing.T) {
+	for _, body := range []string{`{"a":1} trailing`, `{"a":1}{"b":2}`, `{"a":`, `not json`} {
+		if _, ok := redactJSON([]byte(body), map[string]bool{}); ok {
+			t.Errorf("redactJSON(%q) reported success, want it treated as unparseable", body)
+		}
+	}
+}

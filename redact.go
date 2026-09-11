@@ -1,7 +1,9 @@
 package logger
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/url"
 	"strings"
 )
@@ -59,11 +61,26 @@ func redactBody(contentType string, body []byte, fields []string) string {
 }
 
 // redactJSON rewrites a JSON document with sensitive values replaced.
+//
+// Numbers are decoded as json.Number rather than float64. Decoding into a bare
+// interface{} makes every number a float64, so re-marshalling the body
+// silently rewrites any integer past 2^53 -- 9007199254740993 comes back as
+// 9007199254740992. Those are exactly the account and order IDs a request log
+// exists to correlate, so the log must not quietly change them.
 func redactJSON(body []byte, keys map[string]bool) (string, bool) {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+
 	var parsed interface{}
-	if err := json.Unmarshal(body, &parsed); err != nil {
+	if err := dec.Decode(&parsed); err != nil {
 		return "", false
 	}
+	// json.Unmarshal rejects trailing content; Decoder does not, so reject it
+	// here to keep "unparseable body" meaning the same thing.
+	if _, err := dec.Token(); err != io.EOF {
+		return "", false
+	}
+
 	out, err := json.Marshal(redactValue(parsed, keys))
 	if err != nil {
 		return "", false
