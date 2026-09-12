@@ -24,6 +24,15 @@ A structured logging toolkit for Go applications based on [zerolog](https://gith
 - **Query/body logging**: Query parameters are logged by default; `SensitiveQueryParams` (default list redacts common keys like `password`, `token`) avoids leaking secrets, and `DisableQueryRedaction` turns it off. Logged request bodies get the same treatment through `SensitiveBodyFields` / `DisableBodyRedaction`. Avoid enabling `IncludeBody` on sensitive routes. Unparseable query strings are fully redacted.
 - See [SECURITY.md](SECURITY.md) for details and how to report vulnerabilities.
 
+## Requirements
+
+- **Go 1.27+** (`go.mod` declares `go 1.27.0`)
+- `github.com/rs/zerolog`
+- `github.com/gofiber/fiber/v3` v3.4.0+ for the Fiber middleware and handlers
+
+This v2 module line targets Fiber v3. Applications still on Fiber v2 should
+remain on `github.com/soulteary/logger-kit` v1.
+
 ## Installation
 
 ```bash
@@ -354,7 +363,49 @@ type MiddlewareConfig struct {
 }
 ```
 
-**Sensitive data:** `IncludeQuery` is true by default; query strings often contain tokens or passwords. Use `SensitiveQueryParams` (default list includes `password`, `token`, `code`, `secret`, `api_key`, etc.) to redact those values in logs; leave it empty to get that default list, and set `DisableQueryRedaction` to turn redaction off. Redaction used to be disabled by passing `nil` instead of an empty slice — a distinction that does not survive a round trip through JSON or YAML, where an omitted field unmarshals to `nil`, so deserialising a config silently disabled it. Unparseable query strings are fully redacted. `IncludeBody` is false by default; enabling it logs bodies with the same treatment — `SensitiveBodyFields` (empty = default list) redacts fields inside JSON and form-encoded bodies, a body in any other format is replaced wholesale, and `DisableBodyRedaction` logs bodies verbatim. For console format, the default field value formatter uses `%v`; avoid logging sensitive fields (see `logger.SensitiveFieldNames`) or set a custom `FormatFieldValue` to mask them.
+**Sensitive data** is redacted by default. See [Redaction](#redaction) below.
+
+### Redaction
+
+Three places in a request can carry a credential, and each has its own control.
+
+| Source | Logged by default | Redaction list | Opt out |
+|--------|-------------------|----------------|---------|
+| Headers | `IncludeHeaders` (false) | `SensitiveHeaders` | omit the header from the list |
+| Query string | `IncludeQuery` (**true**) | `SensitiveQueryParams` | `DisableQueryRedaction` |
+| Request body | `IncludeBody` (false) | `SensitiveBodyFields` | `DisableBodyRedaction` |
+
+For both lists, **an empty or omitted slice means "use the default list"** — which
+covers `password`, `token`, `code`, `secret`, `api_key` and similar. Set the
+matching `Disable…` flag to log verbatim.
+
+```go
+config := logger.DefaultMiddlewareConfig()
+config.IncludeBody = true
+config.SensitiveBodyFields = []string{"password", "otp", "card_number"}
+
+// Or log verbatim, for a route known to carry no credentials
+config.DisableBodyRedaction = true
+```
+
+**Bodies** are redacted structurally:
+
+- A **JSON object** is rewritten field by field at any depth, so the log line
+  stays valid JSON and non-sensitive fields survive. Numbers are preserved as
+  written — an integer past 2^53 is not rounded through a `float64`.
+- A **form-encoded** body is rewritten the same way.
+- **Anything else** has no field structure to redact selectively and is replaced
+  wholesale rather than logged raw.
+
+A body larger than `MaxBodySize` is truncated and marked `...[truncated]`. A body
+of exactly `MaxBodySize` is not marked — the peek reads one byte past the limit so
+a complete body and a truncated one are distinguishable.
+
+An unparseable query string is redacted in full rather than logged as-is.
+
+For console format the default field-value formatter uses `%v`; avoid logging
+sensitive fields (see `logger.SensitiveFieldNames`) or set a custom
+`FormatFieldValue` to mask them.
 
 ### Level Endpoint Configuration
 
@@ -369,6 +420,128 @@ type LevelHandlerConfig struct {
     MaxBodyBytes    int64    // Max body for PUT/POST (default 4096)
 }
 ```
+
+### Context and Request Helpers
+
+```go
+// Carry a logger
+ctx = logger.ContextWithLogger(ctx, l)
+l = logger.LoggerFromContext(ctx)
+l, ok := logger.LoggerFromContextOK(ctx)
+r = logger.SetLoggerInRequest(r, l)
+l = logger.LoggerFromRequest(r)
+l = logger.LoggerFromFiberCtx(c)
+
+// Carry correlation ids
+ctx = logger.ContextWithRequestID(ctx, id)
+ctx = logger.ContextWithTraceID(ctx, traceID)
+ctx = logger.ContextWithSpanID(ctx, spanID)
+ctx = logger.ContextWithUserID(ctx, userID)
+ctx = logger.ContextWithIDs(ctx, requestID, traceID, spanID) // all three at once
+
+id = logger.RequestIDFromContext(ctx)
+id = logger.RequestIDFromRequest(r)
+id = logger.RequestIDFromFiberCtx(c)
+traceID = logger.TraceIDFromContext(ctx)
+traceID = logger.TraceIDFromRequest(r)
+spanID = logger.SpanIDFromContext(ctx)
+userID = logger.UserIDFromContext(ctx)
+userID = logger.UserIDFromRequest(r)
+
+r = logger.SetRequestIDInRequest(r, id)
+r = logger.SetTraceIDInRequest(r, traceID)
+r = logger.SetUserIDInRequest(r, userID)
+
+// A zerolog logger already carrying the context's ids
+zl := logger.Ctx(ctx)
+zl = logger.LogFromContext(ctx)
+zl = logger.CtxFiber(c)
+```
+
+### Package-Level Logger
+
+```go
+logger.SetDefault(l)
+l := logger.Default()
+
+logger.Trace().Msg("…")
+logger.Debug().Msg("…")
+logger.Info().Msg("…")
+logger.Warn().Msg("…")
+logger.Error().Err(err).Msg("…")
+logger.Fatal().Msg("…")   // exits
+logger.Panic().Msg("…")   // panics
+```
+
+### Levels and Formats
+
+```go
+lvl, err := logger.ParseLevel("debug")
+lvl = logger.MustParseLevel("debug")        // panics on a bad value
+lvl = logger.FromZerolog(zerolog.DebugLevel)
+logger.AllLevels()                          // every Level
+logger.ValidLevelStrings()                  // their string spellings
+
+logger.SetGlobalLevel(lvl)                  // process-wide floor
+lvl = logger.GetGlobalLevel()
+logger.SetDefaultLevel(lvl)                 // default for new loggers
+lvl = logger.GetDefaultLevel()
+
+mgr := logger.NewLevelManager(logger.InfoLevel) // a level you can swap at runtime
+mgr = logger.GlobalLevelManager
+
+format := logger.ParseFormat("console")     // or "json"
+```
+
+### Writers
+
+```go
+// Fan out to several writers
+w := logger.MultiWriter(os.Stdout, fileWriter)
+
+// Fan out, but only send each record to writers whose level accepts it
+w = logger.FilteredMultiWriter(
+    logger.LevelWriter{Writer: os.Stdout, Level: logger.InfoLevel},
+    logger.LevelWriter{Writer: errFile, Level: logger.ErrorLevel},
+)
+
+// Human-readable console output
+cw := logger.NewConsoleWriter(logger.DefaultConsoleWriterConfig())
+```
+
+`logger.TimeFormatPresets` holds the ready-made timestamp layouts, and
+`logger.DefaultFieldNames()` returns the `FieldNames` struct if you need to
+rename `level`, `message`, `time`, `caller`, `error` or `stack`.
+
+## Upgrade Notes (v2.2.0)
+
+Three fields were added; nothing was removed. Two changes affect what ends up in
+your logs.
+
+- **Request bodies are redacted by default.** `IncludeBody` wrote the body to the
+  log verbatim. Query parameters had `redactQuery` and headers had
+  `SensitiveHeaders`, but the body — where a JSON or form login request actually
+  carries its password — had nothing, and the redaction machinery around it made
+  it easy to assume otherwise. JSON and form bodies are now rewritten field by
+  field; any other format is replaced wholesale. Set `DisableBodyRedaction` for a
+  route you know carries no credentials.
+- **Query redaction is disabled with `DisableQueryRedaction`, not a `nil`
+  slice.** The old spelling relied on `nil` differing from an empty slice — a
+  distinction that does not survive a round trip through JSON or YAML, where an
+  omitted field unmarshals to `nil`. **Deserialising a config therefore turned
+  query redaction off without anyone asking for it.** An empty or omitted
+  `SensitiveQueryParams` now means "use the default list". If you passed `nil`
+  deliberately, set `DisableQueryRedaction: true` instead.
+- **Large JSON integers survive redaction.** The body was decoded into a bare
+  `interface{}`, turning every JSON number into a `float64`, so re-marshalling
+  rewrote any integer past 2^53: an order id logged as `9007199254740993` came
+  back as `9007199254740992`. Number tokens are now kept verbatim.
+- **A body of exactly `MaxBodySize` is no longer labelled truncated.** The peek
+  was capped at exactly that many bytes, so a complete body of that size looked
+  identical to a truncated one. One extra byte is read to make the overrun
+  detectable.
+- **`SensitiveBodyFields` and `DisableBodyRedaction` are new**, alongside
+  `DisableQueryRedaction`.
 
 ## Testing
 

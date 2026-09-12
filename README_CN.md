@@ -24,6 +24,15 @@
 - **Query/Body 日志**：默认会记录 URL 查询参数；可通过 `SensitiveQueryParams`（默认会脱敏 password、token 等常见参数）避免泄露敏感信息，`DisableQueryRedaction` 可关闭脱敏。开启请求体记录时，`SensitiveBodyFields` / `DisableBodyRedaction` 提供同样的控制。敏感接口请勿开启 `IncludeBody`。
 - 详见 [SECURITY.md](SECURITY.md) 及漏洞报告方式。
 
+## 环境要求
+
+- **Go 1.27+**（`go.mod` 声明 `go 1.27.0`）
+- `github.com/rs/zerolog`
+- Fiber 中间件与处理器需要 `github.com/gofiber/fiber/v3` v3.4.0+
+
+v2 模块线面向 Fiber v3。仍在 Fiber v2 上的应用请继续使用
+`github.com/soulteary/logger-kit` v1。
+
 ## 安装
 
 ```bash
@@ -354,7 +363,45 @@ type MiddlewareConfig struct {
 }
 ```
 
-**敏感数据：** 默认会记录 query；URL 中常含 token、密码等。可通过 `SensitiveQueryParams`（默认会脱敏 password、token、code、secret、api_key 等）在日志中脱敏；留空即使用该默认列表，需要关闭脱敏请设置 `DisableQueryRedaction`。此前是用 `nil`（而非空切片）表示关闭脱敏，但这一区别无法在 JSON / YAML 往返后保留——字段缺失时反序列化即为 `nil`，于是加载配置会静默关闭脱敏。无法解析的 query 字符串会被整体脱敏。`IncludeBody` 默认关闭，开启后请求体同样会被脱敏：`SensitiveBodyFields`（留空=默认列表）用于脱敏 JSON 与表单请求体中的字段，其它格式的请求体整体替换，`DisableBodyRedaction` 则原样记录。
+**敏感数据**默认会被脱敏，详见下文的[脱敏](#脱敏)一节。
+
+### 脱敏
+
+一个请求里有三处可能携带凭证，每一处都有自己的开关。
+
+| 来源 | 默认是否记录 | 脱敏名单 | 关闭方式 |
+|------|-------------|----------|----------|
+| 请求头 | `IncludeHeaders`（false） | `SensitiveHeaders` | 把该头从名单中移除 |
+| 查询字符串 | `IncludeQuery`（**true**） | `SensitiveQueryParams` | `DisableQueryRedaction` |
+| 请求体 | `IncludeBody`（false） | `SensitiveBodyFields` | `DisableBodyRedaction` |
+
+两个名单都遵循同一规则：**切片为空或未设置表示"使用默认名单"**——默认覆盖
+`password`、`token`、`code`、`secret`、`api_key` 等。需要原样记录请设置对应的
+`Disable…` 开关。
+
+```go
+config := logger.DefaultMiddlewareConfig()
+config.IncludeBody = true
+config.SensitiveBodyFields = []string{"password", "otp", "card_number"}
+
+// 或者对确定不含凭证的路由原样记录
+config.DisableBodyRedaction = true
+```
+
+**请求体**按结构脱敏：
+
+- **JSON 对象**会逐字段、任意深度地重写，所以日志行仍是合法 JSON，非敏感字段也得以
+  保留。数字按原样保留——超过 2^53 的整数不会因为经过 `float64` 而被舍入。
+- **表单编码**的请求体以同样方式重写。
+- **其它格式**没有可供选择性脱敏的字段结构，会被整体替换，而不是原样记录。
+
+超过 `MaxBodySize` 的请求体会被截断并标记 `...[truncated]`。恰好等于 `MaxBodySize`
+的请求体不会被标记——探读会多读一个字节，这样"完整"和"被截断"才能区分开。
+
+无法解析的查询字符串会被整体脱敏，而不是原样记录。
+
+控制台格式下，默认的字段值格式化函数使用 `%v`；请避免记录敏感字段（见
+`logger.SensitiveFieldNames`），或者设置自定义的 `FormatFieldValue` 来遮蔽它们。
 
 ### 日志级别端点配置
 
@@ -369,6 +416,121 @@ type LevelHandlerConfig struct {
     MaxBodyBytes    int64    // PUT/POST 最大 body（默认 4096）
 }
 ```
+
+### 上下文与请求辅助函数
+
+```go
+// 传递 logger
+ctx = logger.ContextWithLogger(ctx, l)
+l = logger.LoggerFromContext(ctx)
+l, ok := logger.LoggerFromContextOK(ctx)
+r = logger.SetLoggerInRequest(r, l)
+l = logger.LoggerFromRequest(r)
+l = logger.LoggerFromFiberCtx(c)
+
+// 传递关联 ID
+ctx = logger.ContextWithRequestID(ctx, id)
+ctx = logger.ContextWithTraceID(ctx, traceID)
+ctx = logger.ContextWithSpanID(ctx, spanID)
+ctx = logger.ContextWithUserID(ctx, userID)
+ctx = logger.ContextWithIDs(ctx, requestID, traceID, spanID) // 三个一次设置
+
+id = logger.RequestIDFromContext(ctx)
+id = logger.RequestIDFromRequest(r)
+id = logger.RequestIDFromFiberCtx(c)
+traceID = logger.TraceIDFromContext(ctx)
+traceID = logger.TraceIDFromRequest(r)
+spanID = logger.SpanIDFromContext(ctx)
+userID = logger.UserIDFromContext(ctx)
+userID = logger.UserIDFromRequest(r)
+
+r = logger.SetRequestIDInRequest(r, id)
+r = logger.SetTraceIDInRequest(r, traceID)
+r = logger.SetUserIDInRequest(r, userID)
+
+// 已经带上 context 中各 ID 的 zerolog logger
+zl := logger.Ctx(ctx)
+zl = logger.LogFromContext(ctx)
+zl = logger.CtxFiber(c)
+```
+
+### 包级 logger
+
+```go
+logger.SetDefault(l)
+l := logger.Default()
+
+logger.Trace().Msg("…")
+logger.Debug().Msg("…")
+logger.Info().Msg("…")
+logger.Warn().Msg("…")
+logger.Error().Err(err).Msg("…")
+logger.Fatal().Msg("…")   // 会退出进程
+logger.Panic().Msg("…")   // 会 panic
+```
+
+### 级别与格式
+
+```go
+lvl, err := logger.ParseLevel("debug")
+lvl = logger.MustParseLevel("debug")        // 取值非法时 panic
+lvl = logger.FromZerolog(zerolog.DebugLevel)
+logger.AllLevels()                          // 所有 Level
+logger.ValidLevelStrings()                  // 它们的字符串写法
+
+logger.SetGlobalLevel(lvl)                  // 进程级下限
+lvl = logger.GetGlobalLevel()
+logger.SetDefaultLevel(lvl)                 // 新建 logger 的默认级别
+lvl = logger.GetDefaultLevel()
+
+mgr := logger.NewLevelManager(logger.InfoLevel) // 运行时可切换的级别
+mgr = logger.GlobalLevelManager
+
+format := logger.ParseFormat("console")     // 或 "json"
+```
+
+### Writer
+
+```go
+// 扇出到多个 writer
+w := logger.MultiWriter(os.Stdout, fileWriter)
+
+// 扇出，但每条记录只发给级别允许它的 writer
+w = logger.FilteredMultiWriter(
+    logger.LevelWriter{Writer: os.Stdout, Level: logger.InfoLevel},
+    logger.LevelWriter{Writer: errFile, Level: logger.ErrorLevel},
+)
+
+// 人类可读的控制台输出
+cw := logger.NewConsoleWriter(logger.DefaultConsoleWriterConfig())
+```
+
+`logger.TimeFormatPresets` 提供了现成的时间戳布局，`logger.DefaultFieldNames()`
+返回 `FieldNames` 结构体，可用于重命名 `level`、`message`、`time`、`caller`、
+`error` 和 `stack`。
+
+## 升级说明（v2.2.0）
+
+新增三个字段，没有删除任何东西。其中两处改变会影响日志里最终写下的内容。
+
+- **请求体默认会被脱敏。** `IncludeBody` 此前把请求体原样写进日志。查询参数有
+  `redactQuery`、请求头有 `SensitiveHeaders`，而请求体——JSON 或表单登录请求真正携带
+  密码的地方——什么都没有，而周围那一圈脱敏机制很容易让人以为它也被覆盖了。现在 JSON
+  和表单请求体会逐字段重写，其它格式整体替换。对确定不含凭证的路由可设置
+  `DisableBodyRedaction`。
+- **关闭 query 脱敏要用 `DisableQueryRedaction`，而不是传 `nil` 切片。** 旧写法依赖
+  `nil` 与空切片的区别——而这个区别无法在 JSON 或 YAML 往返后保留，字段缺失时反序列化
+  即为 `nil`。**于是加载一份配置就会在没人要求的情况下关掉 query 脱敏。** 现在
+  `SensitiveQueryParams` 为空或未设置都表示"使用默认名单"。如果你是刻意传 `nil`，
+  请改为设置 `DisableQueryRedaction: true`。
+- **大整数在脱敏后不会被破坏。** 请求体此前被解码进一个裸 `interface{}`，每个 JSON
+  数字都变成 `float64`，于是重新序列化会改写任何超过 2^53 的整数：日志里本该是
+  `9007199254740993` 的订单号变成了 `9007199254740992`。现在数字 token 按原样保留。
+- **恰好等于 `MaxBodySize` 的请求体不再被标记为截断。** 探读此前正好截到这个字节数，
+  于是一个完整的该尺寸请求体和一个被截断的看起来完全一样。现在会多读一个字节，以便
+  检测是否真的超出。
+- **新增 `SensitiveBodyFields` 和 `DisableBodyRedaction`**，以及
+  `DisableQueryRedaction`。
 
 ## 测试
 
