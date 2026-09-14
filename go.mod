@@ -1,4 +1,4 @@
-module github.com/soulteary/logger-kit/v2
+module github.com/lj020326/logger-kit/v2
 
 go 1.27.0
 

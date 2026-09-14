@@ -1,11 +1,9 @@
 # Logger Kit
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/logger-kit/v2.svg)](https://pkg.go.dev/github.com/soulteary/logger-kit/v2)
+[![Go Reference](https://pkg.go.dev/badge/github.com/lj020326/logger-kit/v2.svg)](https://pkg.go.dev/github.com/lj020326/logger-kit/v2)
 [![Go Report Card](.github/goreportcard.svg)](.github/goreportcard-report.md)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![codecov](https://codecov.io/gh/soulteary/logger-kit/graph/badge.svg)](https://codecov.io/gh/soulteary/logger-kit)
-
-[中文文档](README_CN.md)
+[![codecov](https://codecov.io/gh/lj020326/logger-kit/graph/badge.svg)](https://codecov.io/gh/lj020326/logger-kit)
 
 A structured logging toolkit for Go applications based on [zerolog](https://github.com/rs/zerolog). Provides dynamic log level management, context-based logging, and HTTP endpoints for runtime log level adjustment.
 
@@ -31,12 +29,12 @@ A structured logging toolkit for Go applications based on [zerolog](https://gith
 - `github.com/gofiber/fiber/v3` v3.4.0+ for the Fiber middleware and handlers
 
 This v2 module line targets Fiber v3. Applications still on Fiber v2 should
-remain on `github.com/soulteary/logger-kit` v1.
+remain on `github.com/lj020326/logger-kit` v1.
 
 ## Installation
 
 ```bash
-go get github.com/soulteary/logger-kit/v2
+go get github.com/lj020326/logger-kit/v2
 ```
 
 Version 2 uses Fiber v3 for all Fiber-specific APIs. Applications that still use Fiber v2 should remain on logger-kit v1. The net/http APIs keep the same behavior.
@@ -49,7 +47,7 @@ Version 2 uses Fiber v3 for all Fiber-specific APIs. Applications that still use
 package main
 
 import (
-    "github.com/soulteary/logger-kit/v2"
+    "github.com/lj020326/logger-kit/v2"
 )
 
 func main() {
@@ -78,7 +76,7 @@ package main
 import (
     "os"
     
-    "github.com/soulteary/logger-kit/v2"
+    "github.com/lj020326/logger-kit/v2"
 )
 
 func main() {
@@ -102,7 +100,7 @@ func main() {
 package main
 
 import (
-    "github.com/soulteary/logger-kit/v2"
+    "github.com/lj020326/logger-kit/v2"
 )
 
 func main() {
@@ -130,7 +128,7 @@ package main
 import (
     "net/http"
     
-    "github.com/soulteary/logger-kit/v2"
+    "github.com/lj020326/logger-kit/v2"
 )
 
 func main() {
@@ -162,7 +160,7 @@ package main
 import (
     "net/http"
     
-    "github.com/soulteary/logger-kit/v2"
+    "github.com/lj020326/logger-kit/v2"
 )
 
 func main() {
@@ -198,7 +196,7 @@ package main
 
 import (
     "github.com/gofiber/fiber/v3"
-    "github.com/soulteary/logger-kit/v2"
+    "github.com/lj020326/logger-kit/v2"
 )
 
 func main() {
@@ -237,7 +235,7 @@ package main
 import (
     "context"
     
-    "github.com/soulteary/logger-kit/v2"
+    "github.com/lj020326/logger-kit/v2"
 )
 
 func main() {
@@ -265,7 +263,7 @@ package main
 import (
     "os"
     
-    "github.com/soulteary/logger-kit/v2"
+    "github.com/lj020326/logger-kit/v2"
 )
 
 func main() {
@@ -286,7 +284,7 @@ func main() {
 package main
 
 import (
-    "github.com/soulteary/logger-kit/v2"
+    "github.com/lj020326/logger-kit/v2"
 )
 
 func main() {
