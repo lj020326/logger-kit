@@ -513,6 +513,12 @@ cw := logger.NewConsoleWriter(logger.DefaultConsoleWriterConfig())
 `logger.DefaultFieldNames()` returns the `FieldNames` struct if you need to
 rename `level`, `message`, `time`, `caller`, `error` or `stack`.
 
+## Upgrade Notes (v2.3.0)
+
+Dependency refresh only. No API was removed and no call needs rewriting. The direct requirements (`fiber` v3.5.0, `zerolog` v1.35.1, `uuid` v1.6.0, `testify` v1.12.1) are unchanged.
+
+- The Fiber v3 transitive stack is aligned with the other kits: `fasthttp` v1.74.0, `gofiber/schema` v1.8.6, `golang.org/x/crypto` v0.57.0, `golang.org/x/net` v0.59.0.
+
 ## Upgrade Notes (v2.2.0)
 
 Three fields were added; nothing was removed. Two changes affect what ends up in
