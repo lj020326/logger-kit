@@ -509,6 +509,12 @@ cw := logger.NewConsoleWriter(logger.DefaultConsoleWriterConfig())
 返回 `FieldNames` 结构体，可用于重命名 `level`、`message`、`time`、`caller`、
 `error` 和 `stack`。
 
+## 升级说明（v2.3.0）
+
+仅升级依赖。没有删除任何 API，调用方无需改代码。直接依赖未变（`fiber` v3.5.0、`zerolog` v1.35.1、`uuid` v1.6.0、`testify` v1.12.1）。
+
+- Fiber v3 的间接依赖已与其他 kit 对齐：`fasthttp` v1.74.0、`gofiber/schema` v1.8.6、`golang.org/x/crypto` v0.57.0、`golang.org/x/net` v0.59.0。
+
 ## 升级说明（v2.2.0）
 
 新增三个字段，没有删除任何东西。其中两处改变会影响日志里最终写下的内容。
